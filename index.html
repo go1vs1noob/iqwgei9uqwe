@@ -1,31 +1,380 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dummy Index Page</title>
-    <style>
-        body {
-            font-family: system-ui, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background: #f4f4f8;
-            color: #333;
-        }
-        h1 {
-            font-size: 2.5rem;
-        }
-        p {
-            color: #666;
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Армирование узла (угол стен 135°) — 3D</title>
+<style>
+  :root { --panel-bg: rgba(20,26,32,0.86); --panel-fg: #e6edf3; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #202428;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--panel-fg); }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; touch-action: none; }
+
+  /* CSS2D подписи */
+  .label { color: #fff; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25);
+    padding: 2px 6px; border-radius: 6px; font-size: 13px; white-space: nowrap;
+    pointer-events: none; transform: translate(-50%, -120%); text-shadow: 0 1px 2px #000; }
+
+  /* Панель управления */
+  #ui { position: absolute; top: 10px; left: 10px; max-width: 280px;
+    background: var(--panel-bg); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px; padding: 12px 14px; backdrop-filter: blur(6px);
+    user-select: none; pointer-events: auto; }
+  #ui h1 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
+  #ui .hint { font-size: 11px; opacity: 0.7; margin: 0 0 10px; line-height: 1.35; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; }
+  .row label { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 1; }
+  .row input[type=checkbox] { width: 20px; height: 20px; accent-color: #4ea1ff; }
+  button { font: inherit; color: var(--panel-fg); background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18); border-radius: 9px; padding: 9px 12px;
+    width: 100%; cursor: pointer; margin-top: 6px; }
+  button:active { background: rgba(255,255,255,0.18); }
+
+  /* Легенда */
+  #legend { margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 8px; }
+  #legend .item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0; }
+  #legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: none;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4) inset; }
+
+  #toggleUi { position: absolute; top: 10px; left: 10px; display: none; z-index: 5;
+    width: auto; padding: 8px 12px; }
+
+  @media (max-width: 600px) {
+    #ui { max-width: 78vw; font-size: 13px; }
+    .row { padding: 8px 0; }
+  }
+</style>
 </head>
 <body>
-    <h1>Hello, World!</h1>
-    <p>This is a simple dummy index page.</p>
+<div id="app"></div>
+
+<div id="ui">
+  <h1>Армирование узла · угол 135°</h1>
+  <p class="hint">Вращение — 1 палец / ЛКМ · Зум — 2 пальца / колесо · Сдвиг — 2 пальца / ПКМ</p>
+  <div class="row"><label><input type="checkbox" id="cbConcrete"> Бетон стены (B30)</label></div>
+  <div class="row"><label><input type="checkbox" id="cbLabels" checked> Подписи позиций</label></div>
+  <button id="btnReset">Сбросить вид</button>
+  <button id="btnHide">Свернуть панель</button>
+  <div id="legend"></div>
+</div>
+<button id="toggleUi">Меню</button>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+/* ============================================================
+   ПАРАМЕТРЫ (всё в миллиметрах) — правится здесь
+   ============================================================ */
+const CFG = {
+  angleDeg:     135,     // угол между стенами
+  wallThk:      200,     // толщина стены
+  wallLen:      1300,    // длина каждой стены во фрагменте
+  fragH:        1000,    // высота фрагмента = 5 шагов × 200
+  stepV:        200,     // шаг арматуры по высоте
+  layers:       [50, 150], // положение слоёв стержней поперёк толщины (от внутр. грани)
+  layerFaceShift: 12,    // сдвиг горизонтальных Ø12 и Г-1 наружу от вертикальных (касание)
+  horizCornerGap: 30,    // прямые горизонтальные стержни не доходят до вершины на 30 мм
+  dia12:        12,      // Ø продольных/горизонтальных/гнутых
+  dia10:        10,      // Ø поперечных Кс-1
+  ks1First:     60,      // 1-й каркас Кс-1 от вершины угла
+  ks1Second:    100,     // шаг до 2-го каркаса
+  ks1Step:      200,     // дальнейший шаг каркасов
+  ks1VShift:    11,      // продольные Ø12 — сбоку от поперечных (касание, не сквозь)
+  ks1Top:       150,     // выпуск продольных над верхней поперечиной
+  ks1Bottom:    0,       // выпуск продольных ниже нижней поперечины
+  pLoopLen:     600,     // длина ног П (уходят внутрь стены)
+  pBendOffset:  -90,     // положение загиба П от вершины (−110 + 20 = ещё 20 от угла)
+  p2WallBRaise: 12,      // подъём П стены B над П стены A (чтобы не пересекались у угла)
+  g1LegA:       600,     // плечо Г-1 вдоль стены A (горизонтальной), от гиба
+  g1LegB:       500,     // плечо Г-1 вдоль стены B (Стм-15), от гиба
+  g1Cover:      40,      // привязка центра Г-1 к грани стены (фото 9): 40 мм
+  // вертикальное чередование в модуле, снизу вверх:
+  // поперечный Кс-1 (Ø10) -> горизонт Ø12 -> Г-1 #1 -> Г-1 #2 -> П-2 (каждый на свой уровень)
+  dz: { tie: 0, horiz: 11, g1: 23, g1b: 35, p2: 47 },
+};
+
+const COLORS = {
+  ks1bar: 0xff8c1a,  // Кс-1 продольные Ø12 (поз.15)
+  ks1tie: 0xffd24d,  // Кс-1 поперечные Ø10 (поз.16)
+  horiz:  0x4ea1ff,  // горизонтальные Ø12 (поз.1–13)
+  g1:     0x49d17a,  // Г-1
+  p2:     0xff5d7a,  // П-2
+  p14:    0x35e0e0,  // поз.14
+};
+const LEGEND = [
+  ['ks1bar', 'Кс-1 продольные Ø12 (поз.15)'],
+  ['ks1tie', 'Кс-1 поперечные Ø10 (поз.16)'],
+  ['horiz',  'Горизонтальные Ø12 (поз.1–13)'],
+  ['g1',     'Г-1 (гнутые угловые)'],
+  ['p2',     'П-2 (связи)'],
+  ['p14',    'поз.14 (у вершины угла)'],
+];
+
+/* ============================================================
+   СЦЕНА
+   ============================================================ */
+const app = document.getElementById('app');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202428);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 1, 50000);
+camera.up.set(0, 0, 1);                  // Z — вверх
+camera.position.set(2300, -1700, 1500);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+app.appendChild(renderer.domElement);
+
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+app.appendChild(labelRenderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(300, 0, 500);
+controls.update();
+controls.saveState();
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x33383d, 1.0));
+const dir = new THREE.DirectionalLight(0xffffff, 1.4);
+dir.position.set(1, -1.2, 2);
+scene.add(dir);
+const dir2 = new THREE.DirectionalLight(0xffffff, 0.5);
+dir2.position.set(-1.5, 1, 0.6);
+scene.add(dir2);
+
+/* ============================================================
+   ГЕОМЕТРИЯ СТЕН (локальные системы координат)
+   вершина угла = (0,0,0); внутренние грани сходятся в ней.
+   ============================================================ */
+const half = THREE.MathUtils.degToRad(CFG.angleDeg / 2);
+
+function makeWall(angle) {
+  const u = new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0); // вдоль длины
+  const n = new THREE.Vector3(-u.y, u.x, 0);                        // поперёк толщины
+  if (n.x > 0) n.negate();                                          // наружу от внутр. угла (+X)
+  return { u, n };
+}
+const wallA = makeWall(half);   // Стм-33
+const wallB = makeWall(-half);  // Стм-15
+
+// точка в мировых координатах: s — вдоль стены, d — поперёк толщины (0..200), z — высота
+function P(wall, s, d, z) {
+  return new THREE.Vector3()
+    .addScaledVector(wall.u, s)
+    .addScaledVector(wall.n, d)
+    .setZ(z);
+}
+// "наружу" от вертикальных стержней: внутренний слой -> к внутр. грани, наружный -> к наружной
+const outD = d => d < CFG.wallThk / 2 ? d - CFG.layerFaceShift : d + CFG.layerFaceShift;
+
+// уровни по высоте (z = 0,200,...,1000)
+const levels = [];
+for (let z = 0; z <= CFG.fragH + 1e-6; z += CFG.stepV) levels.push(z);
+
+// положения каркасов Кс-1 от вершины: 60, +100, далее +200
+function cagePositions() {
+  const arr = [];
+  let s = CFG.ks1First; arr.push(s);
+  s += CFG.ks1Second;   arr.push(s);
+  while (true) { s += CFG.ks1Step; if (s > CFG.wallLen) break; arr.push(s); }
+  return arr;
+}
+const cageS = cagePositions();
+
+/* ============================================================
+   ПОСТРОЕНИЕ СТЕРЖНЕЙ
+   ============================================================ */
+const buckets = {};                       // тип -> { color, geoms:[] }
+for (const k in COLORS) buckets[k] = { color: COLORS[k], geoms: [] };
+
+function tube(points, dia) {
+  const r = dia / 2;
+  let curve, seg;
+  if (points.length === 2) { curve = new THREE.LineCurve3(points[0], points[1]); seg = 1; }
+  else { curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.0); seg = 28; }
+  return new THREE.TubeGeometry(curve, seg, r, 7, false);
+}
+const add = (type, points, dia) => buckets[type].geoms.push(tube(points, dia));
+
+// --- Кс-1: вертикальные каркасы вдоль обеих стен ---
+for (const wall of [wallA, wallB]) {
+  for (const s of cageS) {
+    const sv = s + CFG.ks1VShift;          // продольные — сбоку от поперечных
+    for (const d of CFG.layers)            // 2 продольных Ø12, торчат выше верхней поперечины
+      add('ks1bar', [P(wall, sv, d, -CFG.ks1Bottom), P(wall, sv, d, CFG.fragH + CFG.ks1Top)], CFG.dia12);
+    for (const z0 of levels) {             // поперечные Ø10 (L=150), шаг 200 — ниже всех
+      const z = z0 + CFG.dz.tie;
+      add('ks1tie', [P(wall, s, 25, z), P(wall, s, 175, z)], CFG.dia10);
+    }
+  }
+}
+
+// --- Горизонтальные стержни Ø12 (поз.1–13), у обеих граней, со смещёнными обрывами ---
+for (const [wi, wall] of [wallA, wallB].entries()) {
+  levels.forEach((z0, zi) => {
+    const z = z0 + CFG.dz.horiz;          // выше поперечного Кс-1
+    CFG.layers.forEach((d, di) => {
+      const dh = outD(d);                 // наружу от вертикальных стержней
+      // все стержни обрываются по одной линии — анкеровку угла обеспечивает Г-1 (не стыковка)
+      const sStart = CFG.horizCornerGap;
+      add('horiz', [P(wall, sStart, dh, z), P(wall, CFG.wallLen, dh, z)], CFG.dia12);
+    });
+  });
+}
+
+// --- Г-1 (фото 9): анкеровка перекрещиванием. Каждый стержень переходит с одной грани
+//     стены A на ПРОТИВОПОЛОЖНУЮ грань стены B, поэтому два стержня крестятся у угла.
+//     Гиб — в точке пересечения линии "dA от грани A" и линии "dB от грани B". ---
+function g1Bend(dA, dB) {                  // sA, sB вдоль стен при глубинах dA (A) и dB (B)
+  const a1 = wallA.u.x, b1 = -wallB.u.x;
+  const a2 = wallA.u.y, b2 = -wallB.u.y;
+  const c1 = dB * wallB.n.x - dA * wallA.n.x;
+  const c2 = dB * wallB.n.y - dA * wallA.n.y;
+  const det = a1 * b2 - a2 * b1;
+  return { sA: (c1 * b2 - c2 * b1) / det, sB: (a1 * c2 - a2 * c1) / det };
+}
+const dIn = CFG.g1Cover, dOut = CFG.wallThk - CFG.g1Cover;  // 40 и 160
+// две раскладки глубин: [грань A, грань B] — крест-накрест
+const g1Pairs = [[dOut, dIn], [dIn, dOut]];
+for (const z0 of levels) {
+  g1Pairs.forEach(([dA, dB], i) => {
+    const z = z0 + (i === 0 ? CFG.dz.g1 : CFG.dz.g1b);  // второй Г-1 выше, чтобы не пересекались
+    const { sA, sB } = g1Bend(dA, dB);
+    add('g1', [
+      P(wallA, sA + CFG.g1LegA, dA, z),   // плечо 600 вдоль стены A (грань dA)
+      P(wallA, sA, dA, z),                // гиб = пересечение линий dA и dB
+      P(wallB, sB + CFG.g1LegB, dB, z),   // плечо 500 вдоль стены B (грань dB)
+    ], CFG.dia12);
+  });
+}
+
+// --- П: по одной петле у угла на КАЖДОЙ стене; загиб у угла, ноги 600 уходят внутрь стены ---
+for (const [wi, wall] of [wallA, wallB].entries()) {
+  const zRaise = wi === 1 ? CFG.p2WallBRaise : 0;   // стену B приподнимаем, чтобы не пересекались
+  for (const z0 of levels) {
+    const z = z0 + CFG.dz.p2 + zRaise;
+    const s0 = CFG.pBendOffset, L = CFG.pLoopLen;
+    add('p2', [
+      P(wall, s0 + L, 40, z),             // нога 600 внутрь стены (у наружной грани)
+      P(wall, s0, 40, z),                 // загиб у угла
+      P(wall, s0, 160, z),
+      P(wall, s0 + L, 160, z),            // нога 600 внутрь стены (у внутренней грани)
+    ], CFG.dia12);
+  }
+}
+
+// --- поз.14: вертикальные стержни с обратной стороны угла (−X): 50 мм от вершины, затем +100 ---
+for (const r of [50, 150]) {
+  add('p14', [
+    new THREE.Vector3(-r, 0, -CFG.ks1Bottom),            // как у вертикальных стержней Кс-1
+    new THREE.Vector3(-r, 0, CFG.fragH + CFG.ks1Top),
+  ], CFG.dia12);
+}
+
+// слить каждую группу в один меш
+const rebar = new THREE.Group();
+for (const k in buckets) {
+  const b = buckets[k];
+  if (!b.geoms.length) continue;
+  const geo = mergeGeometries(b.geoms, false);
+  const mat = new THREE.MeshStandardMaterial({ color: b.color, metalness: 0.35, roughness: 0.55 });
+  rebar.add(new THREE.Mesh(geo, mat));
+}
+scene.add(rebar);
+
+/* ============================================================
+   БЕТОН СТЕН (полупрозрачный, по умолчанию выключен)
+   ============================================================ */
+const concrete = new THREE.Group();
+concrete.visible = false;
+for (const wall of [wallA, wallB]) {
+  const g = new THREE.BoxGeometry(CFG.wallLen, CFG.wallThk, CFG.fragH);
+  g.translate(CFG.wallLen / 2, CFG.wallThk / 2, CFG.fragH / 2);
+  const m = new THREE.Matrix4().makeBasis(wall.u, wall.n, new THREE.Vector3(0, 0, 1));
+  g.applyMatrix4(m);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x9fb3c8, transparent: true, opacity: 0.16,
+    side: THREE.DoubleSide, depthWrite: false });
+  concrete.add(new THREE.Mesh(g, mat));
+}
+scene.add(concrete);
+
+/* ============================================================
+   ПОДПИСИ ПОЗИЦИЙ (CSS2D)
+   ============================================================ */
+const labels = new THREE.Group();
+function label(text, pos) {
+  const div = document.createElement('div');
+  div.className = 'label';
+  div.textContent = text;
+  const o = new CSS2DObject(div);
+  o.position.copy(pos);
+  labels.add(o);
+}
+label('Кс-1 (поз.15/16)', P(wallA, 360, 50, CFG.fragH + 40));
+label('Ø12 гориз. (поз.1–13)', P(wallA, 850, 150, 600));
+label('Г-1', P(wallA, 260, 50, 800 + 30));
+label('П', P(wallA, 300, 100, 400));
+label('поз.14', new THREE.Vector3(-100, 0, CFG.fragH + CFG.ks1Top + 40));
+scene.add(labels);
+
+/* ============================================================
+   UI
+   ============================================================ */
+const legendEl = document.getElementById('legend');
+for (const [k, name] of LEGEND) {
+  const c = '#' + COLORS[k].toString(16).padStart(6, '0');
+  const item = document.createElement('div');
+  item.className = 'item';
+  item.innerHTML = `<span class="sw" style="background:${c}"></span>${name}`;
+  legendEl.appendChild(item);
+}
+
+document.getElementById('cbConcrete').addEventListener('change', e => concrete.visible = e.target.checked);
+document.getElementById('cbLabels').addEventListener('change', e => labels.visible = e.target.checked);
+document.getElementById('btnReset').addEventListener('click', () => controls.reset());
+
+const ui = document.getElementById('ui');
+const toggleUi = document.getElementById('toggleUi');
+document.getElementById('btnHide').addEventListener('click', () => { ui.style.display = 'none'; toggleUi.style.display = 'block'; });
+toggleUi.addEventListener('click', () => { ui.style.display = 'block'; toggleUi.style.display = 'none'; });
+
+/* ============================================================
+   ЦИКЛ / РЕСАЙЗ
+   ============================================================ */
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+}
+window.addEventListener('resize', resize);
+resize();
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+});
+</script>
 </body>
 </html>
