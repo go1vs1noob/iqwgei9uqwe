@@ -16,6 +16,8 @@
   .label { color: #fff; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25);
     padding: 2px 6px; border-radius: 6px; font-size: 13px; white-space: nowrap;
     pointer-events: none; transform: translate(-50%, -120%); text-shadow: 0 1px 2px #000; }
+  .dim { color: #fff; background: rgba(0,0,0,0.5); padding: 1px 5px; border-radius: 4px;
+    font-size: 12px; pointer-events: none; transform: translate(-50%, -50%); }
 
   /* Панель управления */
   #ui { position: absolute; top: 10px; left: 10px; max-width: 280px;
@@ -53,8 +55,9 @@
 <div id="ui">
   <h1>Армирование узла · угол 135°</h1>
   <p class="hint">Вращение — 1 палец / ЛКМ · Зум — 2 пальца / колесо · Сдвиг — 2 пальца / ПКМ</p>
-  <div class="row"><label><input type="checkbox" id="cbConcrete"> Бетон стены (B30)</label></div>
-  <div class="row"><label><input type="checkbox" id="cbLabels" checked> Подписи позиций</label></div>
+  <div class="row"><label><input type="checkbox" id="cbConcrete" checked> Бетон стены (B30)</label></div>
+  <div class="row"><label><input type="checkbox" id="cbLabels"> Подписи позиций</label></div>
+  <div class="row"><label><input type="checkbox" id="cbDims"> Размеры (защ. слой)</label></div>
   <button id="btnReset">Сбросить вид</button>
   <button id="btnHide">Свернуть панель</button>
   <div id="legend"></div>
@@ -337,6 +340,30 @@ label('поз.14', new THREE.Vector3(-100, 0, CFG.fragH + CFG.ks1Top + 40));
 scene.add(labels);
 
 /* ============================================================
+   РАЗМЕРЫ: расстояние от грани стены до центра стержня (защ. слой)
+   ============================================================ */
+const dims = new THREE.Group();
+dims.visible = false;
+const dimMat = new THREE.LineBasicMaterial({ color: 0xffffff });
+function dimLine(wall, s, dFace, dBar, value, z) {
+  const p1 = P(wall, s, dFace, z), p2 = P(wall, s, dBar, z);
+  dims.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([p1, p2]), dimMat));
+  const div = document.createElement('div');
+  div.className = 'dim';
+  div.textContent = value;
+  const o = new CSS2DObject(div);
+  o.position.copy(P(wall, s, (dFace + dBar) / 2, z));
+  dims.add(o);
+}
+// Кс-1: центр в 50 мм от каждой грани (d=50 и d=150)
+dimLine(wallA, 571, 0, 50, '50', 600);
+dimLine(wallA, 571, CFG.wallThk, 150, '50', 600);
+// Г-1: центр в 40 мм от каждой грани (d=40 и d=160)
+dimLine(wallA, 400, 0, CFG.g1Cover, '40', 223);
+dimLine(wallA, 400, CFG.wallThk, CFG.wallThk - CFG.g1Cover, '40', 223);
+scene.add(dims);
+
+/* ============================================================
    UI
    ============================================================ */
 const legendEl = document.getElementById('legend');
@@ -348,17 +375,31 @@ for (const [k, name] of LEGEND) {
   legendEl.appendChild(item);
 }
 
-document.getElementById('cbConcrete').addEventListener('change', e => concrete.visible = e.target.checked);
-document.getElementById('cbLabels').addEventListener('change', e => labels.visible = e.target.checked);
+// тумблеры: [id чекбокса, объект сцены, включён ли по умолчанию] — единый источник состояния
+const TOGGLES = [
+  ['cbConcrete', concrete, true],   // по умолчанию включён ТОЛЬКО бетон
+  ['cbLabels',   labels,   false],
+  ['cbDims',     dims,     false],
+];
+// CSS2D-объекты (подписи/размеры) НЕ наследуют visible группы — выставляем всем потомкам
+const setVis = (obj, on) => obj.traverse(o => { o.visible = on; });
+for (const [id, obj, on] of TOGGLES) {
+  const cb = document.getElementById(id);
+  cb.checked = on;
+  setVis(obj, on);
+  cb.addEventListener('change', () => setVis(obj, cb.checked));
+}
 document.getElementById('btnReset').addEventListener('click', () => controls.reset());
 
 const ui = document.getElementById('ui');
 const toggleUi = document.getElementById('toggleUi');
-document.getElementById('btnHide').addEventListener('click', () => { ui.style.display = 'none'; toggleUi.style.display = 'block'; });
-toggleUi.addEventListener('click', () => { ui.style.display = 'block'; toggleUi.style.display = 'none'; });
-// панель свёрнута по умолчанию
-ui.style.display = 'none';
-toggleUi.style.display = 'block';
+const showPanel = (open) => {
+  ui.style.display = open ? 'block' : 'none';
+  toggleUi.style.display = open ? 'none' : 'block';
+};
+document.getElementById('btnHide').addEventListener('click', () => showPanel(false));
+toggleUi.addEventListener('click', () => showPanel(true));
+showPanel(false);   // панель свёрнута по умолчанию
 
 /* ============================================================
    ЦИКЛ / РЕСАЙЗ
