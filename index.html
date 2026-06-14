@@ -108,20 +108,19 @@ const CFG = {
 };
 
 const COLORS = {
-  ks1bar: 0xff8c1a,  // Кс-1 продольные Ø12 (поз.15)
-  ks1tie: 0xffd24d,  // Кс-1 поперечные Ø10 (поз.16)
-  horiz:  0x4ea1ff,  // горизонтальные Ø12 (поз.1–13)
+  ks1bar: 0xff8c1a,  // Кс-1 (все стержни — одна позиция, один цвет)
+  ks1tie: 0xff8c1a,  // Кс-1 (тот же цвет)
+  horiz:  0x4ea1ff,  // поз.1 (горизонтальные Ø12)
   g1:     0x49d17a,  // Г-1
   p2:     0xff5d7a,  // П-2
   p14:    0x35e0e0,  // поз.14
 };
 const LEGEND = [
-  ['ks1bar', 'Кс-1 продольные Ø12 (поз.15)'],
-  ['ks1tie', 'Кс-1 поперечные Ø10 (поз.16)'],
-  ['horiz',  'Горизонтальные Ø12 (поз.1–13)'],
-  ['g1',     'Г-1 (гнутые угловые)'],
-  ['p2',     'П-2 (связи)'],
-  ['p14',    'поз.14 (у вершины угла)'],
+  ['ks1bar', 'Кс-1'],
+  ['horiz',  'поз.1'],
+  ['g1',     'Г-1'],
+  ['p2',     'П-2'],
+  ['p14',    'поз.14'],
 ];
 
 /* ============================================================
@@ -330,10 +329,10 @@ function label(text, pos) {
   o.position.copy(pos);
   labels.add(o);
 }
-label('Кс-1 (поз.15/16)', P(wallA, 360, 50, CFG.fragH + 40));
-label('Ø12 гориз. (поз.1–13)', P(wallA, 850, 150, 600));
+label('Кс-1', P(wallA, 360, 50, CFG.fragH + 40));
+label('поз.1', P(wallA, 850, 150, 600));
 label('Г-1', P(wallA, 260, 50, 800 + 30));
-label('П', P(wallA, 300, 100, 400));
+label('П-2', P(wallA, 300, 100, 400));
 label('поз.14', new THREE.Vector3(-100, 0, CFG.fragH + CFG.ks1Top + 40));
 scene.add(labels);
 
@@ -357,6 +356,9 @@ const ui = document.getElementById('ui');
 const toggleUi = document.getElementById('toggleUi');
 document.getElementById('btnHide').addEventListener('click', () => { ui.style.display = 'none'; toggleUi.style.display = 'block'; });
 toggleUi.addEventListener('click', () => { ui.style.display = 'block'; toggleUi.style.display = 'none'; });
+// панель свёрнута по умолчанию
+ui.style.display = 'none';
+toggleUi.style.display = 'block';
 
 /* ============================================================
    ЦИКЛ / РЕСАЙЗ
